@@ -1,0 +1,71 @@
+# Small single-head causal attention graph. Fixed demonstration weights, not a trained model.
+node Input
+out:
+    Tensor
+impl:
+    Tensor.full(2, 4, 0.5)
+
+node Project
+in:
+    x: Tensor
+out:
+    Tensor
+impl:
+    Tensor.MatMul(x, Tensor.full(4, 4, 0.25))
+
+node Position
+in:
+    x: Tensor
+out:
+    Tensor
+impl:
+    Tensor.RoPE(x)
+
+node Scores
+in:
+    q: Tensor
+    k: Tensor
+out:
+    Tensor
+impl:
+    Tensor.Scale(Tensor.MatMul(q, Tensor.Transpose(k)), 0.5)
+
+node Normalize
+in:
+    scores: Tensor
+out:
+    Tensor
+impl:
+    Tensor.Softmax(Tensor.CausalMask(scores))
+
+node Mix
+in:
+    probabilities: Tensor
+    values: Tensor
+out:
+    Tensor
+impl:
+    Tensor.MatMul(probabilities, values)
+
+node Residual
+in:
+    attention: Tensor
+    x: Tensor
+out:
+    Tensor
+impl:
+    Tensor.Add(attention, x)
+
+flow Main
+out:
+    Tensor
+Input() -> x
+Project(x) -> q0
+Project(x) -> k0
+Project(x) -> v
+Position(q0) -> q
+Position(k0) -> k
+Scores(q, k) -> scores
+Normalize(scores) -> probabilities
+Mix(probabilities, v) -> attention
+Residual(attention, x)

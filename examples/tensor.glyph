@@ -1,0 +1,30 @@
+node MatrixA
+out:
+    Tensor
+impl:
+    Tensor.full(2, 3, 2.0)
+
+node MatrixB
+out:
+    Tensor
+impl:
+    Tensor.full(3, 2, 3.0)
+
+node Multiply
+in:
+    a: Tensor
+    b: Tensor
+out:
+    Tensor
+ensure:
+    Tensor.rows(output) == Tensor.rows(a)
+    Tensor.cols(output) == Tensor.cols(b)
+impl:
+    Tensor.MatMul(a, b)
+
+flow Main
+out:
+    Tensor
+MatrixA() -> a
+MatrixB() -> b
+Multiply(a, b)

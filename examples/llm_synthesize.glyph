@@ -1,0 +1,21 @@
+# Intentionally has no impl or output == expression: actual model synthesis is required.
+node ClampScore
+in:
+    score: Int
+out:
+    Int
+effect:
+    none
+ensure:
+    output >= 0
+    output <= 100
+intent:
+    Return score clamped to the inclusive range 0 through 100.
+    Preserve scores already inside the range.
+
+flow Main
+in:
+    score: Int
+out:
+    Int
+ClampScore(score)

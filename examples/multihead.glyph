@@ -1,0 +1,91 @@
+# Grouped-query attention block with rotary positions.
+# Two query heads share one key/value head, head dimension 4, sequence length 3.
+# Fixed demonstration values, not trained weights. Shapes are the same ones a
+# Qwen2 layer uses, so this exercises Tensor.MultiRoPE and Tensor.Attend
+# without needing a checkpoint on disk.
+
+node Queries
+out:
+    Tensor
+ensure:
+    Tensor.rows(output) == 3
+    Tensor.cols(output) == 8
+impl:
+    Tensor.values(3, 8, "0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 -0.10 0.15 -0.25 0.35 0.45 -0.55 0.65 -0.75 0.05 -0.10 0.20 -0.30 0.40 0.50 -0.60 0.70")
+
+node Keys
+out:
+    Tensor
+ensure:
+    Tensor.cols(output) == 4
+impl:
+    Tensor.values(3, 4, "0.20 -0.40 0.60 -0.80 0.30 0.50 -0.70 0.90 -0.15 0.25 0.35 -0.45")
+
+node Values
+out:
+    Tensor
+ensure:
+    Tensor.cols(output) == 4
+impl:
+    Tensor.values(3, 4, "1.00 0.00 -1.00 2.00 0.50 1.50 -0.50 0.25 -2.00 0.75 1.25 -0.25")
+
+node RotateQueries
+in:
+    x: Tensor
+out:
+    Tensor
+ensure:
+    Tensor.rows(output) == Tensor.rows(x)
+    Tensor.cols(output) == Tensor.cols(x)
+intent:
+    Apply RoPE per query head. Two heads across eight columns.
+impl:
+    Tensor.MultiRoPE(x, 2, 10000.0)
+
+node RotateKeys
+in:
+    x: Tensor
+out:
+    Tensor
+ensure:
+    Tensor.cols(output) == Tensor.cols(x)
+intent:
+    Apply RoPE to the single shared key head.
+impl:
+    Tensor.MultiRoPE(x, 1, 10000.0)
+
+node Attend
+in:
+    q: Tensor
+    k: Tensor
+    v: Tensor
+out:
+    Tensor
+ensure:
+    Tensor.rows(output) == Tensor.rows(q)
+    Tensor.cols(output) == Tensor.cols(q)
+intent:
+    Causal grouped-query attention. Both query heads read the one key/value head.
+impl:
+    Tensor.Attend(q, k, v, 2, 1)
+
+node LastRow
+in:
+    x: Tensor
+out:
+    Tensor
+ensure:
+    Tensor.rows(output) == 1
+impl:
+    Tensor.Last(x)
+
+flow Main
+out:
+    Tensor
+Queries() -> q0
+Keys() -> k0
+Values() -> v
+RotateQueries(q0) -> q
+RotateKeys(k0) -> k
+Attend(q, k, v) -> attention
+LastRow(attention)

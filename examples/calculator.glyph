@@ -1,0 +1,97 @@
+# Interactive integer calculator. Default Main adds; select Subtract/Multiply/Divide via --flow.
+node Prompt
+in:
+    message: Text
+out:
+    Text
+effect:
+    IO
+impl:
+    IO.print(message)
+
+node ReadNumber
+out:
+    Int
+effect:
+    IO
+impl:
+    Text.toInt(IO.readLine())
+
+node AddNumbers
+in:
+    a: Int
+    b: Int
+out:
+    Int
+impl:
+    a + b
+
+node SubtractNumbers
+in:
+    a: Int
+    b: Int
+out:
+    Int
+impl:
+    a - b
+
+node MultiplyNumbers
+in:
+    a: Int
+    b: Int
+out:
+    Int
+impl:
+    a * b
+
+node DivideNumbers
+in:
+    a: Int
+    b: Int
+out:
+    Int
+require:
+    b != 0
+impl:
+    a / b
+
+flow Main
+out:
+    Int
+Prompt("Glyph 덧셈 계산기 — 첫 번째 정수를 입력하세요:")
+ReadNumber() -> a
+Prompt("두 번째 정수를 입력하세요:")
+ReadNumber() -> b
+Prompt("결과:")
+AddNumbers(a, b)
+
+flow Subtract
+out:
+    Int
+Prompt("Glyph 뺄셈 계산기 — 첫 번째 정수를 입력하세요:")
+ReadNumber() -> a
+Prompt("두 번째 정수를 입력하세요:")
+ReadNumber() -> b
+Prompt("결과:")
+SubtractNumbers(a, b)
+
+flow Multiply
+out:
+    Int
+Prompt("Glyph 곱셈 계산기 — 첫 번째 정수를 입력하세요:")
+ReadNumber() -> a
+Prompt("두 번째 정수를 입력하세요:")
+ReadNumber() -> b
+Prompt("결과:")
+MultiplyNumbers(a, b)
+
+flow Divide
+out:
+    Int
+Prompt("Glyph 정수 나눗셈 계산기 — 첫 번째 정수를 입력하세요:")
+ReadNumber() -> a
+Prompt("두 번째 정수를 입력하세요:")
+ReadNumber() -> b
+Prompt("결과:")
+DivideNumbers(a, b)
+

@@ -1,0 +1,18 @@
+node Double
+in:
+    value: Int
+out:
+    Int
+effect:
+    none
+ensure:
+    output == value * 2
+intent:
+    입력값을 두 배로 만든다.
+
+flow Main
+in:
+    number: Int
+out:
+    Int
+Double

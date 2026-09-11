@@ -1,0 +1,27 @@
+node Double
+in:
+    value: Int > 0
+out:
+    Int
+effect:
+    none
+ensure:
+    output == value * 2
+impl:
+    value * 2
+
+node Describe
+in:
+    value: Int
+out:
+    Text
+impl:
+    "result=" + Text.fromInt(value)
+
+flow Main
+in:
+    number: Int
+out:
+    Text
+Double(number) -> doubled
+Describe(doubled)

@@ -1,0 +1,38 @@
+state User persistent {
+    id: Int unique
+    email: Text unique
+}
+
+node CreateUser
+in:
+    email: Text
+out:
+    User
+require:
+    Text.length(email) > 3
+ensure:
+    output.email == email
+impl:
+    User(1, email)
+
+node SaveUser
+in:
+    user: User
+out:
+    User
+write:
+    User
+effect:
+    DB.Write
+fail:
+    DBError
+
+flow Register atomic
+in:
+    email: Text
+out:
+    User
+fail:
+    DBError
+CreateUser(email) -> user
+SaveUser(user)
