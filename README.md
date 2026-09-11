@@ -133,7 +133,34 @@ Flow가 여러 개면 `--flow Name`으로 entry를 선택합니다. 기본값은
 
 `ensure: output == 표현식`에서 구현을 결정적으로 추출할 수 있습니다. 나머지는 사용자가 제공한 모델 Flow로 처리합니다.
 
-후보는 두 단계로 검증합니다. 먼저 일반 Node와 같은 parser/type/effect 검사를 통과해야 합니다. 그다음 해당 Node가 속한 효과 없는 Flow를 입력 격자 위에서 실제로 실행해 `ensure` 계약을 검사합니다. 계약을 깨는 후보는 반례 입력과 함께 거부되고 repair 프롬프트에 그 진단이 들어갑니다. 입력 refinement나 `require`를 벗어난 격자 점은 후보의 잘못이 아니므로 건너뜁니다. 격자는 타입별 고정 값이며 조합 수를 64개로 제한합니다. 이것은 계약 증명이 아니라 반례 탐색입니다.
+후보는 두 단계로 검증합니다. 먼저 일반 Node와 같은 parser/type/effect 검사를 통과해야 합니다. 그다음 해당 Node가 속한 효과 없는 Flow를 입력 격자 위에서 실제로 실행합니다. 실행 중에 `ensure` 계약이 깨지거나 0 나눗셈 같은 산술 오류가 나면 후보를 반례 입력과 함께 거부하고, 그 진단을 repair 프롬프트에 넣습니다. 입력 refinement나 `require`를 벗어난 격자 점은 Node가 처리하겠다고 약속한 적이 없는 입력이므로 건너뜁니다. 격자는 타입별 고정 값이며 조합 수를 64개로 제한합니다. 이것은 계약 증명이 아니라 반례 탐색입니다.
+
+### 합성 벤치마크
+
+`bench/synthesis_bench.py`는 "모델이 자연어 intent를 읽고 실제로 동작하는 코드를 내는가"를 측정합니다. 12개 과제가 각각 intent와, 답을 알려주지 않는 범위의 `ensure` 계약을 선언합니다. `output == 표현식` 형태는 하나도 쓰지 않으므로 결정적 추출로는 풀 수 없습니다.
+
+과제마다 세 단계를 기록합니다.
+
+- `compiled`: parser/type/effect 검사 통과.
+- `accepted`: 계약 실행 검증까지 통과해 소스가 실제로 생성됨.
+- `correct`: 생성된 소스를 참조 구현과 비교해 일치. 비교에 쓰는 입력 격자는 계약 검증에 쓰는 격자와 일부러 다르게 두어 격자에 과적합된 답을 잡습니다.
+
+```sh
+GLYPH_BIN=build/glyph python3 bench/synthesis_bench.py path/to/Qwen2.5-0.5B-Instruct
+```
+
+Qwen2.5-0.5B-Instruct 결과입니다. greedy 디코딩이므로 재실행해도 같은 값이 나옵니다.
+
+| 지표 | 12과제 중 |
+|---|---|
+| 계약 검증까지 통과 | 7 |
+| 참조 구현과 일치 | 6 |
+| 첫 시도에 통과 | 7 |
+| 통과했지만 틀림 | 1 |
+
+읽는 방법은 이렇습니다. 모델이 틀린 답을 낸 6과제 중 5과제는 컴파일러와 계약이 막아서 소스가 생성되지 않았습니다. 즉 결합의 효과는 "틀린 코드"를 "코드 없음"으로 바꾸는 것입니다. 통과했지만 틀린 1과제는 Sign이며, `output >= -1`과 `output <= 1`만 선언해서 `select(value > 0, 1, -1)`이 계약을 만족해 버립니다. 계약이 약하면 검증도 약하다는 뜻이고, 도구의 버그가 아닙니다.
+
+0.5B가 성공한 과제는 select 한 번으로 끝나는 것들입니다(절댓값, 하한 0, 두 값 중 큰 값·작은 값, 차이, 짝수 판정). 실패는 두 종류로 갈립니다. 중첩 select가 필요한 과제(0~100 clamp, 학점 변환)와 출력이 `Bool`인 과제 일부에서 타입이 맞지 않는 식을 반복해서 냈습니다. 모델 크기 문제로 보이며, 더 큰 모델이나 코더 모델로 같은 벤치마크를 돌리면 바로 비교됩니다.
 
 ```sh
 ./build/glyph synth application.glyph -o build/resolved.glyph \
@@ -236,7 +263,7 @@ Qwen2.5-0.5B-Instruct에서 영어, 한국어, 코드, 이모지, chat template,
 - `src/expression.cpp`: 표현식 lexer, precedence parser, 타입·효과 검사, stack IR.
 - `src/compiler.cpp`: symbol/type/graph resolution, 계약 lowering, last-use release, bytecode emission, context slicing.
 - `src/graph.cpp`, `src/graph_view.hpp`: 그래프 JSON export와 독립형 HTML 시각화.
-- `src/synth.cpp`: 합성 순서, 모델 graph compilation, candidate 검증, resolved source와 trace 생성.
+- `src/synth.cpp`: 합성 순서, 모델 graph compilation, candidate 타입 검증과 계약 실행 검증, resolved source와 trace 생성.
 - `runtime/kernel.cpp`: bytecode decoder, VM, 계약/오류, SQLite transaction.
 - `runtime/tensor.cpp`: CPU Tensor primitive.
 - `runtime/model.cpp`: 같은 VM을 호출하는 byte-level autoregressive 생성 드라이버.

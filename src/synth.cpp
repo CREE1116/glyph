@@ -52,9 +52,11 @@ static std::string serialize(const Program &p) {
     return s;
 }
 // Compilation only proves that a candidate types and connects. An `ensure`
-// contract is a runtime check, so the way to make it filter candidates is to run
-// the flow. Probes that fall outside a declared input refinement, or that trip a
-// `require`, are not candidate faults and are skipped.
+// contract is a runtime check, and so is an arithmetic fault such as division by
+// zero, so the way to make either filter candidates is to run the flow. A probe
+// that falls outside a declared input refinement, or that trips a `require`, is
+// describing an input the node never promised to handle, so it is skipped.
+// Everything else that the flow raises counts against the candidate.
 static std::string probe_contracts(const Compiled &c, const std::string &node) {
     const ResolvedFlow *target = nullptr;
     for (const auto &flow : c.flows) {
@@ -103,13 +105,13 @@ static std::string probe_contracts(const Compiled &c, const std::string &node) {
     } catch (const Error &) {
         return "";
     }
-    const std::string marker = node + ": ensure";
     for (const auto &row : grid) {
         try {
             runtime::run(module, row);
         } catch (const Error &e) {
             std::string message = e.what();
-            if (message.find(marker) == std::string::npos)
+            if (message.find("input refinement") != std::string::npos ||
+                message.find(": require ") != std::string::npos)
                 continue;
             std::string inputs;
             for (size_t i = 0; i < row.size(); ++i)
