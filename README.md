@@ -95,7 +95,8 @@ Double
 | `glyph check source.glyph` | 전체 소스의 타입·계약 표현식·효과·Flow 연결 검사. unresolved 개수 표시 |
 | `glyph graph source.glyph` | 연결된 입력 바이트코드, Node 순서, 효과, unresolved를 JSON으로 출력 |
 | `glyph build source.glyph -o app.gyb` | 결정적인 버전 1 바이트코드 생성. unresolved가 있으면 실패 |
-| `glyph run source.glyph 또는 app.gyb -- 인수` | VM 실행. 반환값은 JSON으로 출력 |
+| `glyph run source.glyph 또는 app.gyb -- 인수` | 컴파일 후 VM 실행. 반환값은 JSON으로 출력 |
+| `glyph run source.glyph --model MODEL_DIR -- 인수` | 미해결 Node를 메모리에서 합성한 뒤 실행. 소스는 그대로 |
 | `glyph test source.glyph -- 인수` | 한 번의 entry 실행 및 실행된 계약 검사. 테스트 자동 생성 기능은 아님 |
 | `glyph synth source.glyph --units` | unresolved Node별 관련 타입·계약·intent slice 출력 |
 | `glyph synth source.glyph -o resolved.glyph` | 결정적 합성 우선, 필요 시 `--model`의 Glyph 모델 실행 |
@@ -125,6 +126,15 @@ Flow가 여러 개면 `--flow Name`으로 entry를 선택합니다. 기본값은
 모델 없이 재현 가능한 예제:
 
 `examples/intent.glyph`는 impl이 없는 Node 두 개로 된 파이프라인입니다. 각 Node는 `intent`로 할 일을, `ensure`로 지켜야 할 것을 선언하고 구현은 모델이 씁니다.
+
+`run`, `test`, `build`에 `--model`을 주면 미해결 Node를 그 자리에서 합성한 뒤 이어서 실행합니다. 소스 파일은 건드리지 않고 해결된 프로그램은 그 프로세스 안에만 존재합니다.
+
+```sh
+./build/glyph run examples/intent.glyph --model path/to/Qwen2.5-0.5B-Instruct -- -20 64
+# 64
+```
+
+생성된 소스를 남기려면 `synth`로 파일에 쓰고 그 파일을 실행합니다.
 
 ```sh
 ./build/glyph synth examples/intent.glyph -o build/intent.glyph \

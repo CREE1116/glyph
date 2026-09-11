@@ -14,7 +14,8 @@ int main(int argc, char **argv) {
                    "glyph check SOURCE\n"
                    "glyph graph SOURCE [--html] [-o graph.json|graph.html]\n"
                    "glyph build SOURCE [-o program.gyb] [--flow Main]\n"
-                   "glyph run SOURCE|program.gyb [--flow Main] [--db file.sqlite] [-- ARG...]\n"
+                   "glyph run SOURCE|program.gyb [--flow Main] [--db file.sqlite]\n"
+                   "          [--model MODEL_DIR] [-- ARG...]\n"
                    "glyph synth SOURCE -o resolved.glyph [--model model.glyph] [--trace "
                    "trace.jsonl]\n"
                    "glyph synth SOURCE --units [-o units.txt]\n"
@@ -127,6 +128,14 @@ int main(int argc, char **argv) {
                 throw Error("trace must use a separate path");
             save(synthesize(c, model, trace));
             return 0;
+        }
+        // run, test and build compile and execute. When impl is still missing and
+        // a model is given, resolve it here instead of making the caller invoke
+        // synth by hand. The source file is never touched; the resolved program
+        // exists only for this process, and -o still writes bytecode for build.
+        if (!bytecode && !c.unresolved.empty() && !model.empty()) {
+            auto resolved = synthesize(c, model, trace);
+            c = compile(parse(resolved, file));
         }
         if (!bytecode) {
             if (entry.empty())

@@ -154,6 +154,20 @@ class GlyphTests(unittest.TestCase):
         model = self.dir/'model.glyph'
         model.write_text(f'node ForwardNode\nin:\n    tokens: Tensor\nout:\n    Tensor\neffect:\n    File.Read\nimpl:\n    Tensor.Last(Tensor.Embedding(Tensor.load({json.dumps(str(weights))}), tokens))\nflow Forward\nin:\n    tokens: Tensor\nout:\n    Tensor\nForwardNode(tokens)\n')
         return model
+    def test_run_synthesizes_when_given_a_model(self):
+        # run compiles and executes. An unresolved node is resolved in memory
+        # when a model is given, and the source file is left alone.
+        model = self.transition_model()
+        p = self.source('node Identity\nin:\n    Int\nout:\n    Int\nintent:\n    Return input unchanged.\nflow Main\nin:\n    Int\nout:\n    Int\nIdentity\n')
+        before = p.read_bytes()
+        self.assertEqual(self.cli('run',p,'--model',model,'--','42').stdout.strip(),'42')
+        self.assertEqual(p.read_bytes(),before)
+        self.assertEqual(self.cli('test',p,'--model',model,'--','7').stdout.strip(),'7')
+        artifact = self.dir/'app.gyb'
+        self.cli('build',p,'--model',model,'-o',artifact)
+        self.assertEqual(self.cli('run',artifact,'--','9').stdout.strip(),'9')
+        # Without a model the same source must refuse, and say what to pass.
+        self.assertIn('--model',self.cli('run',p,'--','42',ok=False).stderr)
     def test_ensure_contract_rejects_candidate(self):
         # The fixture answers 'input'. It types and compiles, but violates the
         # declared ensure, so synthesis must run the contract and refuse it.

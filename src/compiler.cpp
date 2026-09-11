@@ -250,7 +250,8 @@ Compiled compile(Program p) {
 }
 std::string emit(const Compiled &c, const std::string &entry) {
     if (!c.unresolved.empty())
-        throw Error("unresolved node " + c.unresolved.front() + "; use glyph synth or add impl");
+        throw Error("unresolved node " + c.unresolved.front() +
+                    "; write its impl, or pass --model MODEL_DIR to synthesize it");
     std::string out = "GLYPH-BC 1\n";
     auto line = [&](const std::string &op, const std::string &arg) {
         out += op + " " + quote(arg) + "\n";
