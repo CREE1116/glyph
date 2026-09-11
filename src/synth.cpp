@@ -4,6 +4,7 @@
 #include <filesystem>
 #include "glyph/compiler.hpp"
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <sstream>
 namespace glyph {
@@ -51,29 +52,160 @@ static std::string serialize(const Program &p) {
     }
     return s;
 }
+// The compiler already knows the node's input names, that Bool literals are
+// lowercase, and how min/max/abs desugar into select. Asking the model to get
+// those right is asking it to redo work the compiler can do, so a candidate is
+// normalized before it is judged. Every rewrite is applied only when it is
+// unambiguous, and the normalized text still has to pass the ordinary type,
+// effect and contract checks. Rewrites are recorded so a trace shows them.
+namespace {
+bool word_char(char c) { return isalnum(static_cast<unsigned char>(c)) || c == '_'; }
+
+// Splits the argument list of a call at top-level commas. Empty on imbalance.
+std::vector<std::string> call_arguments(const std::string &text, size_t open, size_t &close) {
+    std::vector<std::string> args;
+    int depth = 0;
+    size_t start = open + 1;
+    for (size_t i = open; i < text.size(); ++i) {
+        if (text[i] == '(')
+            ++depth;
+        else if (text[i] == ')') {
+            if (--depth == 0) {
+                args.push_back(trim(text.substr(start, i - start)));
+                close = i;
+                return args;
+            }
+        } else if (text[i] == ',' && depth == 1) {
+            args.push_back(trim(text.substr(start, i - start)));
+            start = i + 1;
+        }
+    }
+    return {};
+}
+
+// Rewrites min/max/abs calls into select, innermost first.
+bool desugar(std::string &text, std::vector<std::string> &applied) {
+    static const char *names[] = {"min", "max", "abs"};
+    for (const char *name : names) {
+        size_t at = 0;
+        while ((at = text.find(name, at)) != std::string::npos) {
+            size_t after = at + strlen(name);
+            bool bounded = (at == 0 || !word_char(text[at - 1])) && after < text.size() &&
+                           text[after] == '(';
+            if (!bounded) {
+                ++at;
+                continue;
+            }
+            size_t close = 0;
+            auto args = call_arguments(text, after, close);
+            size_t wanted = std::string(name) == "abs" ? 1u : 2u;
+            if (args.size() != wanted || args[0].empty() ||
+                (wanted == 2 && args[1].empty()) ||
+                args[0].find('(') != std::string::npos ||
+                (wanted == 2 && args[1].find('(') != std::string::npos)) {
+                ++at;
+                continue; // Nested or malformed: leave it for the type checker to reject.
+            }
+            std::string replacement;
+            if (wanted == 1)
+                replacement = "select(" + args[0] + " < 0, -(" + args[0] + "), " + args[0] + ")";
+            else
+                replacement = "select(" + args[0] + (std::string(name) == "max" ? " > " : " < ") +
+                              args[1] + ", " + args[0] + ", " + args[1] + ")";
+            applied.push_back(std::string("rewrote ") + name + " as select");
+            text = text.substr(0, at) + replacement + text.substr(close + 1);
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string normalize_candidate(std::string text, const Node &node, const Program &program,
+                                std::vector<std::string> &applied) {
+    if (text.rfind("```", 0) == 0) {
+        auto first = text.find('\n'), last = text.rfind("```");
+        if (first != std::string::npos && last > first) {
+            text = trim(text.substr(first + 1, last - first - 1));
+            applied.push_back("removed Markdown fence");
+        }
+    }
+    auto newline = text.find('\n');
+    if (newline != std::string::npos) {
+        text = trim(text.substr(0, newline));
+        applied.push_back("kept the first line");
+    }
+    for (const auto &pair : {std::pair<const char *, const char *>{"True", "true"},
+                             {"False", "false"}}) {
+        size_t at = 0;
+        const std::string from = pair.first, to = pair.second;
+        while ((at = text.find(from, at)) != std::string::npos) {
+            bool bounded = (at == 0 || !word_char(text[at - 1])) &&
+                           (at + from.size() >= text.size() || !word_char(text[at + from.size()]));
+            if (!bounded) {
+                at += from.size();
+                continue;
+            }
+            text = text.substr(0, at) + to + text.substr(at + from.size());
+            applied.push_back("lowercased the Bool literal " + from);
+            at += to.size();
+        }
+    }
+    while (desugar(text, applied)) {
+    }
+    // A single unbound bare name can only have meant the node's only input.
+    if (node.inputs.size() == 1 && !node.inputs[0].name.empty()) {
+        std::set<std::string> known{node.inputs[0].name, "input", "output", "true", "false",
+                                    "select", "Tensor", "Text", "Weight", "Unit"};
+        for (const auto &record : program.records)
+            known.insert(record.first);
+        std::set<std::string> unbound;
+        for (size_t i = 0; i < text.size();) {
+            if (!word_char(text[i]) || isdigit(static_cast<unsigned char>(text[i]))) {
+                ++i;
+                continue;
+            }
+            size_t start = i;
+            while (i < text.size() && word_char(text[i]))
+                ++i;
+            std::string word = text.substr(start, i - start);
+            bool called = i < text.size() && (text[i] == '(' || text[i] == '.');
+            bool qualified = start > 0 && text[start - 1] == '.';
+            if (!called && !qualified && !known.count(word))
+                unbound.insert(word);
+        }
+        if (unbound.size() == 1) {
+            const std::string from = *unbound.begin(), to = node.inputs[0].name;
+            std::string rebound;
+            for (size_t i = 0; i < text.size();) {
+                if (text.compare(i, from.size(), from) == 0 &&
+                    (i == 0 || !word_char(text[i - 1])) &&
+                    (i + from.size() >= text.size() || !word_char(text[i + from.size()]))) {
+                    rebound += to;
+                    i += from.size();
+                } else
+                    rebound += text[i++];
+            }
+            applied.push_back("bound the name " + from + " to the input " + to);
+            text = rebound;
+        }
+    }
+    return trim(text);
+}
+} // namespace
+
 // Compilation only proves that a candidate types and connects. An `ensure`
 // contract is a runtime check, and so is an arithmetic fault such as division by
-// zero, so the way to make either filter candidates is to run the flow. A probe
-// that falls outside a declared input refinement, or that trips a `require`, is
-// describing an input the node never promised to handle, so it is skipped.
-// Everything else that the flow raises counts against the candidate.
-static std::string probe_contracts(const Compiled &c, const std::string &node) {
-    const ResolvedFlow *target = nullptr;
-    for (const auto &flow : c.flows) {
-        if (!flow.effects.empty())
-            continue;
-        for (const auto &step : flow.steps)
-            if (step.node == node) {
-                target = &flow;
-                break;
-            }
-        if (target)
-            break;
-    }
-    if (!target)
-        return "";
+// zero, so the way to make either filter candidates is to run the node.
+//
+// The node is probed on its own, in a throwaway one-node flow, rather than
+// inside the program's real flow. Probing the real flow would skip every node
+// whose siblings are still unresolved, and it would blame a node for a contract
+// its neighbour broke. A probe that falls outside a declared input refinement,
+// or that trips a `require`, describes an input the node never promised to
+// handle, so it is skipped. Everything else the node raises counts against it.
+static std::string probe_contracts(const Program &program, const Node &node) {
     std::vector<std::vector<runtime::Value>> columns;
-    for (const auto &input : target->flow.inputs) {
+    for (const auto &input : node.inputs) {
         if (input.type == "Int")
             columns.push_back({std::int64_t(-1000), std::int64_t(-1), std::int64_t(0),
                                std::int64_t(1), std::int64_t(7), std::int64_t(50),
@@ -87,6 +219,28 @@ static std::string probe_contracts(const Compiled &c, const std::string &node) {
         else
             return ""; // Structures and Tensors have no meaningful default grid.
     }
+    Program single;
+    single.path = "<contract probe>";
+    single.records = program.records;
+    single.nodes[node.name] = node;
+    Flow flow;
+    flow.name = "Probe";
+    flow.output = node.output;
+    flow.line = node.line;
+    std::string arguments;
+    for (auto input : node.inputs) {
+        input.refinement.clear(); // Refinements belong to the node, not the flow.
+        flow.inputs.push_back(input);
+        arguments += (arguments.empty() ? "" : ", ") + input.name;
+    }
+    flow.steps = {{node.line, node.name + "(" + arguments + ")"}};
+    single.flows["Probe"] = flow;
+    runtime::Module module;
+    try {
+        module = runtime::decode(emit(compile(single), "Probe"));
+    } catch (const Error &) {
+        return ""; // Effects, records or anything else this probe cannot stage.
+    }
     std::vector<std::vector<runtime::Value>> grid{{}};
     for (const auto &column : columns) {
         std::vector<std::vector<runtime::Value>> next;
@@ -99,12 +253,6 @@ static std::string probe_contracts(const Compiled &c, const std::string &node) {
             }
         grid = std::move(next);
     }
-    runtime::Module module;
-    try {
-        module = runtime::decode(emit(c, target->flow.name));
-    } catch (const Error &) {
-        return "";
-    }
     for (const auto &row : grid) {
         try {
             runtime::run(module, row);
@@ -115,8 +263,7 @@ static std::string probe_contracts(const Compiled &c, const std::string &node) {
                 continue;
             std::string inputs;
             for (size_t i = 0; i < row.size(); ++i)
-                inputs += (i ? ", " : "") + target->flow.inputs[i].name + " = " +
-                          runtime::display(row[i]);
+                inputs += (i ? ", " : "") + node.inputs[i].name + " = " + runtime::display(row[i]);
             return message + (inputs.empty() ? "" : " with " + inputs);
         }
     }
@@ -152,6 +299,7 @@ std::string synthesize(const Compiled &original, const std::string &model_path,
             "Example increasing an integer: input + 1\n"
             "Example upper bound of ten: select(x > 10, 10, x)\n" + unit;
         std::string diagnostic;
+        std::set<std::string> rejected;
         bool accepted = false;
         for (int attempt = 0; attempt < 3; ++attempt) {
             if (candidate.empty()) {
@@ -179,9 +327,10 @@ std::string synthesize(const Compiled &original, const std::string &model_path,
                 auto request=prompt+(diagnostic.empty()?"":"The previous attempt was rejected by the compiler.\n"+
                                      diagnostic+"\nReturn a corrected expression.\n")+"EXPRESSION:\n";
                 candidate=qwen?qwen->generate(request):model->generate(request);
-                if(candidate.rfind("```",0)==0){auto first=candidate.find('\n'),last=candidate.rfind("```");
-                    if(first!=candidate.npos&&last>first&&trim(candidate.substr(last+3)).empty())
-                        candidate=trim(candidate.substr(first+1,last-first-1));}
+                std::vector<std::string> rewrites;
+                candidate = normalize_candidate(candidate, node, p, rewrites);
+                for (const auto &rewrite : rewrites)
+                    std::cerr << "normalized " << name << ": " << rewrite << "\n";
             }
             try {
                 if (candidate.empty() || candidate.find('\n') != candidate.npos ||
@@ -189,8 +338,8 @@ std::string synthesize(const Compiled &original, const std::string &model_path,
                     throw Error("candidate must be a single expression");
                 auto trial = p;
                 trial.nodes.at(name).sections["impl"] = {{node.line, candidate}};
-                auto checked = compile(trial);
-                auto violation = probe_contracts(checked, name);
+                compile(trial);
+                auto violation = probe_contracts(trial, trial.nodes.at(name));
                 if (!violation.empty())
                     throw Error(violation);
                 p = std::move(trial);
@@ -200,11 +349,18 @@ std::string synthesize(const Compiled &original, const std::string &model_path,
                          ",\"accepted\":true}\n";
                 break;
             } catch (const Error &e) {
+                bool repeat = !rejected.insert(candidate).second;
                 diagnostic = "Candidate: "+candidate+"\n"+e.what();
                 trace += "{\"node\":" + quote(name) + ",\"input\":" + quote(unit) +
                          ",\"candidate\":" + quote(candidate) +
                          ",\"accepted\":false,\"diagnostic\":" + quote(diagnostic) + "}\n";
                 candidate.clear();
+                // Decoding is greedy, so an identical candidate means the repair
+                // note changed nothing and further attempts cannot either.
+                if (repeat) {
+                    std::cerr << "stopping " << name << ": the model repeated a rejected candidate\n";
+                    break;
+                }
             }
         }
         if (!accepted) {

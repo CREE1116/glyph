@@ -187,8 +187,11 @@ class GlyphTests(unittest.TestCase):
         self.cli('synth',bad,'-o',rejected,'--model',model,'--trace',trace,ok=False)
         self.assertFalse(rejected.exists())
         attempts = [json.loads(line) for line in trace.read_text().splitlines()]
-        self.assertEqual(len(attempts),3)
         self.assertTrue(all(not a['accepted'] for a in attempts))
+        # The fixture is deterministic, so the second attempt repeats the first
+        # and further attempts cannot differ either. Retrying stops there.
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(attempts[0]['candidate'],attempts[1]['candidate'])
     def test_last_use_releases_preserve_aliases(self):
         p = self.source('node A\nout:\n    Tensor\nimpl:\n    Tensor.full(1, 1, 2.0)\nnode Sum\nin:\n    a: Tensor\n    b: Tensor\nout:\n    Tensor\nimpl:\n    Tensor.Add(a, b)\nflow Main\nout:\n    Tensor\nA() -> a\nSum(a, a) -> b\nSum(a, b)\n')
         artifact = self.dir/'app.gyb'

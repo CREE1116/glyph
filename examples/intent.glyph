@@ -1,0 +1,48 @@
+# Two nodes with no impl. Each declares what it must do in `intent` and what
+# must hold in `ensure`, and `glyph synth --model DIR` writes the expressions.
+#
+# A generated expression is re-checked as ordinary source: parser, types and
+# effects first, then the contracts are executed over a grid of inputs. A
+# candidate that type-checks but breaks a contract is rejected with the input
+# that broke it, and that counterexample goes into the repair prompt. So a
+# contract here is not documentation. It decides whether the code is written.
+#
+#   ./build/glyph synth examples/intent.glyph -o build/intent.glyph \
+#       --model path/to/Qwen2.5-0.5B-Instruct
+#   ./build/glyph run build/intent.glyph -- -20 64
+#   # 64
+#
+# Checked against Qwen2.5-0.5B-Instruct, which is small enough that several
+# tasks in bench/synthesis_bench.py are beyond it. When it is wrong here, the
+# contracts refuse the source rather than emitting it.
+
+node FloorAtZero
+in:
+    raw: Int
+out:
+    Int
+ensure:
+    output >= 0
+intent:
+    Return raw, except that a negative raw becomes zero.
+
+node TakeHigher
+in:
+    first: Int
+    second: Int
+out:
+    Int
+ensure:
+    output >= first
+    output >= second
+intent:
+    Return whichever of the two inputs is larger.
+
+flow Main
+in:
+    raw: Int
+    retry: Int
+out:
+    Int
+FloorAtZero(raw) -> floored
+TakeHigher(floored, retry)
