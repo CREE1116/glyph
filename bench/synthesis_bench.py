@@ -18,6 +18,9 @@ Three outcomes are recorded per task:
 weak to catch a wrong implementation.
 
     GLYPH_BIN=build/glyph python3 bench/synthesis_bench.py MODEL_DIR
+
+The model directory can also come from GLYPH_QWEN_DIR, the same variable
+tests/test_model.py reads.
 """
 import json
 import os
@@ -104,11 +107,17 @@ def source(task):
 
 
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit(__doc__)
-    model = sys.argv[1]
+    model = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("GLYPH_QWEN_DIR", "")
+    if len(sys.argv) > 2:
+        raise SystemExit("usage: python3 bench/synthesis_bench.py MODEL_DIR")
+    if not model:
+        raise SystemExit("no model directory given\n"
+                         "usage: python3 bench/synthesis_bench.py MODEL_DIR\n"
+                         "   or: GLYPH_QWEN_DIR=... python3 bench/synthesis_bench.py")
+    if not Path(model, "config.json").exists():
+        raise SystemExit("%s does not look like a model directory: no config.json" % model)
     if not BIN.exists():
-        raise SystemExit("build glyph first, or set GLYPH_BIN")
+        raise SystemExit("%s not found: build glyph first, or set GLYPH_BIN" % BIN)
     rows, work = [], Path(tempfile.mkdtemp())
     for task in TASKS:
         path = work / (task["name"] + ".glyph")
